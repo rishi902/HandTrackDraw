@@ -254,6 +254,26 @@ input[type="range"] {
   border-color: var(--accent);
 }
 
+.slider-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+}
+
+.slider-row span {
+  min-width: 2.2em;
+  text-align: right;
+  color: var(--text);
+}
+
 .hint ul {
   margin: 0;
   padding-left: 18px;

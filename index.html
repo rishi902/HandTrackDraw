@@ -61,6 +61,10 @@
           <input type="checkbox" id="mirror-toggle" checked />
           Mirror view
         </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="show-skeleton" />
+          Show hand skeleton
+        </label>
       </section>
 
       <section class="control-group">
@@ -68,6 +72,30 @@
         <div class="btn-row">
           <button id="clear-btn">Clear</button>
           <button id="save-btn">Save PNG</button>
+        </div>
+      </section>
+
+      <section class="control-group">
+        <h2>Detection tuning</h2>
+        <div class="slider-row">
+          <label for="num-hands">Max hands</label>
+          <input type="range" id="num-hands" min="1" max="2" step="1" value="2" />
+          <span id="num-hands-value">2</span>
+        </div>
+        <div class="slider-row">
+          <label for="min-hand-detection-confidence">Detection confidence</label>
+          <input type="range" id="min-hand-detection-confidence" min="0.1" max="0.9" step="0.05" value="0.5" />
+          <span id="min-hand-detection-confidence-value">0.5</span>
+        </div>
+        <div class="slider-row">
+          <label for="min-hand-presence-confidence">Presence confidence</label>
+          <input type="range" id="min-hand-presence-confidence" min="0.1" max="0.9" step="0.05" value="0.5" />
+          <span id="min-hand-presence-confidence-value">0.5</span>
+        </div>
+        <div class="slider-row">
+          <label for="min-tracking-confidence">Tracking confidence</label>
+          <input type="range" id="min-tracking-confidence" min="0.1" max="0.9" step="0.05" value="0.5" />
+          <span id="min-tracking-confidence-value">0.5</span>
         </div>
       </section>
 
