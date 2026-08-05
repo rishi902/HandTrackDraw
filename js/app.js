@@ -524,12 +524,12 @@ function armModelLoadTimer() {
       statusModel.textContent = "MODEL: FAILED";
       statusModel.classList.add("warn");
       overlayMsg.textContent =
-        "Hand-tracking model is taking too long to load. This is usually a " +
-        "network/firewall issue — school, work, or public Wi-Fi networks " +
-        "often block cdn.jsdelivr.net or storage.googleapis.com, and ad " +
-        "blockers/privacy extensions can too. Try a different network " +
-        "(e.g. mobile data), disable extensions for this site, or check " +
-        "the browser console (F12) for the exact blocked request.";
+        "Hand-tracking model is taking too long to load. The model files " +
+        "are served from this same site (no third-party CDN involved), so " +
+        "this usually means a slow connection, the browser lacks " +
+        "WebAssembly/Worker support, or an extension is blocking scripts " +
+        "on this page. Try reloading, a different browser, or check the " +
+        "browser console (F12) for the exact failing request.";
       startBtn.disabled = false;
       startOverlay.classList.remove("hidden");
     }
@@ -549,9 +549,9 @@ function armNoHandHintTimer() {
 
 // ---------- Worker + detection pump ----------
 function setupWorker() {
-  worker = new Worker(new URL("./hand-worker.js", import.meta.url), {
-    type: "module",
-  });
+  // Classic (non-module) worker on purpose — see the comment at the top of
+  // hand-worker.js for why.
+  worker = new Worker(new URL("./hand-worker.js", import.meta.url));
 
   worker.onmessage = (e) => {
     const msg = e.data;

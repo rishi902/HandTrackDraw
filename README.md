@@ -9,7 +9,10 @@ strokes, glowing "strings", or particle sparks in the air.
 - **Real-time hand tracking** in the browser using Google's [MediaPipe
   HandLandmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) —
   no install, no server-side ML, everything runs on-device via WebAssembly,
-  in a **Web Worker** so inference never blocks drawing/rendering.
+  in a **Web Worker** so inference never blocks drawing/rendering. The
+  WASM runtime and model are **vendored into this repo** (see
+  `vendor/mediapipe/` and `models/`) and served same-origin, not from a
+  third-party CDN — see [`vendor/mediapipe/README.md`](vendor/mediapipe/README.md).
 - **Smoothed, jitter-free tracking** — fingertip positions are eased every
   render frame and hands are identified by handedness (Left/Right) rather
   than array order, so strokes don't jump or flicker.
@@ -33,10 +36,11 @@ strokes, glowing "strings", or particle sparks in the air.
 
 ## Running it
 
-No build step required — it's plain HTML/CSS/JS loaded via ES modules and a
-CDN-hosted MediaPipe bundle. You just need to serve the folder over HTTP
-(camera access requires `http://localhost` or `https://`, plain `file://`
-won't work in most browsers):
+No build step required — it's plain HTML/CSS/JS loaded via ES modules, with
+the MediaPipe runtime and model vendored directly in this repo (nothing
+fetched from a third-party CDN at runtime). You just need to serve the
+folder over HTTP (camera access requires `http://localhost` or `https://`,
+plain `file://` won't work in most browsers):
 
 ```bash
 # from the repo root
@@ -69,13 +73,12 @@ The status bar under the video (CAMERA / MODEL / HAND) tells you exactly
 where things are stuck:
 
 - **`MODEL: LOADING...` forever, then `MODEL: FAILED`** — the browser
-  couldn't download the tracking model or WASM runtime. This is almost
-  always a network/firewall issue, not a bug: **school, workplace, and
-  public Wi-Fi networks very commonly block `storage.googleapis.com` or
-  CDN domains like `cdn.jsdelivr.net`**, and ad blockers / privacy
-  extensions can too. Try a different network (e.g. mobile data/hotspot),
-  temporarily disable extensions for this site, or open DevTools (F12) →
-  Network tab and look for a failed/blocked request to confirm.
+  couldn't load the tracking model or WASM runtime. These now ship from
+  this same site (see Features above), not a third-party CDN, so this
+  usually means a slow connection, a browser/extension actively blocking
+  scripts on the page, or a browser too old to support WebAssembly/Workers.
+  Open DevTools (F12) → Network tab, reload, and look for a failed/blocked
+  request under `vendor/` or `models/` to confirm.
 - **`MODEL: READY` but `HAND: NONE` and a hint appears below the status
   bar** — the pipeline is working, it just isn't seeing a hand. Make sure
   your whole hand is in frame with decent lighting, or lower the sliders
