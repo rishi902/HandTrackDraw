@@ -1,7 +1,17 @@
-import {
-  HandLandmarker,
-  DrawingUtils,
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+// NOTE: deliberately no top-level imports from the MediaPipe CDN here.
+// This file must load and wire up the entire UI (including the Start
+// Camera button) even if the CDN is blocked by a network/firewall/ad
+// blocker — only the Worker (hand-worker.js) depends on it, and a failure
+// there is caught and reported instead of taking the whole page down.
+// Hardcoded so the skeleton overlay doesn't need HandLandmarker.HAND_CONNECTIONS.
+const HAND_CONNECTIONS = [
+  [0, 1], [0, 5], [9, 13], [13, 17], [5, 9], [0, 17],
+  [1, 2], [2, 3], [3, 4],
+  [5, 6], [6, 7], [7, 8],
+  [9, 10], [10, 11], [11, 12],
+  [13, 14], [14, 15], [15, 16],
+  [17, 18], [18, 19], [19, 20],
+];
 
 // ---------- DOM ----------
 const video = document.getElementById("video");
@@ -58,7 +68,6 @@ let running = false;
 let workerReady = false;
 let awaitingDetection = false;
 let worker = null;
-let drawingUtils = null;
 let modelLoadTimer = null;
 let noHandHintTimer = null;
 let everSawHand = false;
@@ -363,16 +372,24 @@ function drawStrings(handStates, time) {
 }
 
 function drawSkeleton(state) {
-  if (!drawingUtils) drawingUtils = new DrawingUtils(fxCtx);
-  drawingUtils.drawConnectors(state.landmarksNorm, HandLandmarker.HAND_CONNECTIONS, {
-    color: "rgba(255,255,255,0.5)",
-    lineWidth: 2,
+  fxCtx.save();
+  fxCtx.strokeStyle = "rgba(255,255,255,0.5)";
+  fxCtx.lineWidth = 2;
+  HAND_CONNECTIONS.forEach(([a, b]) => {
+    const pa = state.smoothPx[a];
+    const pb = state.smoothPx[b];
+    fxCtx.beginPath();
+    fxCtx.moveTo(pa.x, pa.y);
+    fxCtx.lineTo(pb.x, pb.y);
+    fxCtx.stroke();
   });
-  drawingUtils.drawLandmarks(state.landmarksNorm, {
-    color: "rgba(255,255,255,0.8)",
-    lineWidth: 1,
-    radius: 2,
+  fxCtx.fillStyle = "rgba(255,255,255,0.8)";
+  state.smoothPx.forEach((p) => {
+    fxCtx.beginPath();
+    fxCtx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+    fxCtx.fill();
   });
+  fxCtx.restore();
 }
 
 // ---------- Hand tracking state ----------
