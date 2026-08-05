@@ -8,7 +8,14 @@ strokes, glowing "strings", or particle sparks in the air.
 
 - **Real-time hand tracking** in the browser using Google's [MediaPipe
   HandLandmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) —
-  no install, no server-side ML, everything runs on-device via WebAssembly.
+  no install, no server-side ML, everything runs on-device via WebAssembly,
+  in a **Web Worker** so inference never blocks drawing/rendering.
+- **Smoothed, jitter-free tracking** — fingertip positions are eased every
+  render frame and hands are identified by handedness (Left/Right) rather
+  than array order, so strokes don't jump or flicker.
+- Optional **hand skeleton overlay** and **detection-confidence sliders**
+  (max hands, detection/presence/tracking confidence) for tuning tracking
+  to your lighting/camera.
 - **Three visual modes**
   - ✏️ **Draw** — pinch to paint a persistent freehand stroke. Toggle "Glow
     trail" for a fading light-painting effect instead of a permanent line.
@@ -48,6 +55,9 @@ hand-tracking model on first load.
    radiate from your palm.
 5. Use **Clear** to wipe the canvas, or **Save PNG** to download your
    drawing.
+6. If tracking feels jittery or misses your hand, open **Detection
+   tuning** and adjust the confidence sliders, or enable **Show hand
+   skeleton** to see exactly what the model is tracking.
 
 ## Notes
 
