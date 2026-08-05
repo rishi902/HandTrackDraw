@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HandTrackDraw</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>HandTrackDraw</h1>
+    <p class="tagline">Pinch your thumb + index finger to draw in the air</p>
+  </header>
+
+  <main class="app">
+    <div class="stage-wrap">
+      <div class="stage" id="stage">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="draw-canvas"></canvas>
+        <canvas id="fx-canvas"></canvas>
+      </div>
+
+      <div class="stage-overlay" id="start-overlay">
+        <button id="start-btn" class="primary-btn">Start Camera</button>
+        <p id="overlay-msg" class="overlay-msg"></p>
+      </div>
+
+      <div class="status-bar">
+        <span id="status-text">Camera off</span>
+      </div>
+    </div>
+
+    <aside class="controls">
+      <section class="control-group">
+        <h2>Mode</h2>
+        <div class="mode-buttons" id="mode-buttons">
+          <button class="mode-btn active" data-mode="draw">✏️ Draw</button>
+          <button class="mode-btn" data-mode="strings">🎇 Strings</button>
+          <button class="mode-btn" data-mode="sparks">✨ Sparks</button>
+        </div>
+      </section>
+
+      <section class="control-group">
+        <h2>Color</h2>
+        <div class="palette" id="palette"></div>
+        <input type="color" id="custom-color" value="#00e5ff" title="Custom color" />
+      </section>
+
+      <section class="control-group">
+        <h2>Brush Size</h2>
+        <input type="range" id="brush-size" min="2" max="40" value="8" />
+        <span id="brush-size-label">8 px</span>
+      </section>
+
+      <section class="control-group">
+        <label class="checkbox-row">
+          <input type="checkbox" id="glow-trail" />
+          Glow trail (fading strokes)
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="mirror-toggle" checked />
+          Mirror view
+        </label>
+      </section>
+
+      <section class="control-group">
+        <h2>Canvas</h2>
+        <div class="btn-row">
+          <button id="clear-btn">Clear</button>
+          <button id="save-btn">Save PNG</button>
+        </div>
+      </section>
+
+      <section class="control-group hint">
+        <h2>Gestures</h2>
+        <ul>
+          <li><strong>Pinch</strong> (thumb + index touch) — draw / spark</li>
+          <li><strong>Open hand</strong> — strings mode radiates from palm</li>
+          <li><strong>Two hands</strong> — strings connect between hands</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
