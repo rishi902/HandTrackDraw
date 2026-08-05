@@ -13,10 +13,17 @@ const stage = document.getElementById("stage");
 const startOverlay = document.getElementById("start-overlay");
 const startBtn = document.getElementById("start-btn");
 const overlayMsg = document.getElementById("overlay-msg");
+const statusCamera = document.getElementById("status-camera");
+const statusModel = document.getElementById("status-model");
 const statusText = document.getElementById("status-text");
+const statusHint = document.getElementById("status-hint");
 const modeButtonsWrap = document.getElementById("mode-buttons");
-const palette = document.getElementById("palette");
-const customColor = document.getElementById("custom-color");
+const wheelCanvas = document.getElementById("color-wheel");
+const wheelCtx = wheelCanvas.getContext("2d");
+const wheelCursor = document.getElementById("wheel-cursor");
+const colorPreview = document.getElementById("color-preview");
+const colorHex = document.getElementById("color-hex");
+const brightnessSlider = document.getElementById("color-brightness");
 const brushSize = document.getElementById("brush-size");
 const brushSizeLabel = document.getElementById("brush-size-label");
 const glowTrailToggle = document.getElementById("glow-trail");
@@ -26,11 +33,6 @@ const clearBtn = document.getElementById("clear-btn");
 const saveBtn = document.getElementById("save-btn");
 
 // ---------- Tunables ----------
-const PRESET_COLORS = [
-  "#ff2d75", "#00e5ff", "#7cff00", "#ffea00",
-  "#b967ff", "#ff7a00", "#ffffff", "#00ffa3",
-];
-
 const FINGERTIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
 
@@ -39,8 +41,14 @@ const PINCH_ON_RATIO = 0.45; // start pinch when dist < scale * this
 const PINCH_OFF_RATIO = 0.62; // release pinch when dist > scale * this (hysteresis avoids flicker)
 const MIN_DRAW_DELTA = 0.4; // px, skip near-zero-length segments while still
 
+const MODEL_LOAD_TIMEOUT_MS = 20000;
+const NO_HAND_HINT_DELAY_MS = 6000;
+
 // ---------- State ----------
 let currentColor = "#00e5ff";
+let currentHue = 190;
+let currentSat = 1;
+let currentVal = 1;
 let currentBrushSize = 8;
 let currentMode = "draw";
 let glowTrail = false;
@@ -51,45 +59,132 @@ let workerReady = false;
 let awaitingDetection = false;
 let worker = null;
 let drawingUtils = null;
+let modelLoadTimer = null;
+let noHandHintTimer = null;
+let everSawHand = false;
 
 let particles = [];
 /** @type {Map<string, HandState>} keyed by handedness label ("Left"/"Right") for stable identity across frames */
 const trackedHands = new Map();
 
 const workerOptions = {
-  numHands: 2,
+  numHands: 1,
   minHandDetectionConfidence: 0.5,
   minHandPresenceConfidence: 0.5,
   minTrackingConfidence: 0.5,
 };
 
-// ---------- Palette setup ----------
-function buildPalette() {
-  PRESET_COLORS.forEach((color, i) => {
-    const btn = document.createElement("button");
-    btn.className = "swatch";
-    btn.style.background = color;
-    btn.dataset.color = color;
-    if (i === 1) btn.classList.add("selected");
-    btn.addEventListener("click", () => selectColor(color, btn));
-    palette.appendChild(btn);
-  });
+// ---------- Color wheel ----------
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
 }
 
-function selectColor(color, btnEl) {
-  currentColor = color;
-  document
-    .querySelectorAll(".swatch")
-    .forEach((el) => el.classList.remove("selected"));
-  if (btnEl) btnEl.classList.add("selected");
-  customColor.value = color;
+function rgbToHex(r, g, b) {
+  return (
+    "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")
+  );
 }
 
-customColor.addEventListener("input", (e) => {
-  currentColor = e.target.value;
-  document
-    .querySelectorAll(".swatch")
-    .forEach((el) => el.classList.remove("selected"));
+function drawColorWheel() {
+  const w = wheelCanvas.width;
+  const h = wheelCanvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = w / 2;
+
+  wheelCtx.clearRect(0, 0, w, h);
+  wheelCtx.save();
+  wheelCtx.beginPath();
+  wheelCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  wheelCtx.clip();
+
+  const conic = wheelCtx.createConicGradient(-Math.PI / 2, cx, cy);
+  for (let i = 0; i <= 360; i += 15) {
+    conic.addColorStop(i / 360, `hsl(${i},100%,50%)`);
+  }
+  wheelCtx.fillStyle = conic;
+  wheelCtx.fillRect(0, 0, w, h);
+
+  const radial = wheelCtx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  radial.addColorStop(0, "rgba(255,255,255,1)");
+  radial.addColorStop(1, "rgba(255,255,255,0)");
+  wheelCtx.fillStyle = radial;
+  wheelCtx.fillRect(0, 0, w, h);
+
+  wheelCtx.restore();
+  wheelCtx.strokeStyle = "#333";
+  wheelCtx.lineWidth = 1;
+  wheelCtx.beginPath();
+  wheelCtx.arc(cx, cy, r - 0.5, 0, Math.PI * 2);
+  wheelCtx.stroke();
+}
+
+function applyColorFromHsv() {
+  const [r, g, b] = hsvToRgb(currentHue, currentSat, currentVal);
+  currentColor = rgbToHex(r, g, b);
+  colorPreview.style.background = currentColor;
+  colorHex.textContent = currentColor.toUpperCase();
+}
+
+function setWheelCursorFromHsv() {
+  const w = wheelCanvas.width;
+  const cx = w / 2;
+  const r = w / 2;
+  const angle = (currentHue / 360) * Math.PI * 2 - Math.PI / 2;
+  const dist = currentSat * r;
+  const x = cx + Math.cos(angle) * dist;
+  const y = cx + Math.sin(angle) * dist;
+  wheelCursor.style.left = `${x}px`;
+  wheelCursor.style.top = `${y}px`;
+}
+
+function pickColorFromWheelEvent(clientX, clientY) {
+  const rect = wheelCanvas.getBoundingClientRect();
+  const cx = rect.width / 2;
+  const cy = rect.height / 2;
+  const r = rect.width / 2;
+  const dx = clientX - rect.left - cx;
+  const dy = clientY - rect.top - cy;
+  const dist = Math.min(Math.hypot(dx, dy), r);
+  let angle = Math.atan2(dy, dx) + Math.PI / 2;
+  if (angle < 0) angle += Math.PI * 2;
+
+  currentHue = (angle / (Math.PI * 2)) * 360;
+  currentSat = dist / r;
+  applyColorFromHsv();
+  setWheelCursorFromHsv();
+}
+
+let wheelDragging = false;
+wheelCanvas.addEventListener("pointerdown", (e) => {
+  wheelDragging = true;
+  wheelCanvas.setPointerCapture(e.pointerId);
+  pickColorFromWheelEvent(e.clientX, e.clientY);
+});
+wheelCanvas.addEventListener("pointermove", (e) => {
+  if (wheelDragging) pickColorFromWheelEvent(e.clientX, e.clientY);
+});
+wheelCanvas.addEventListener("pointerup", () => {
+  wheelDragging = false;
+});
+
+brightnessSlider.addEventListener("input", (e) => {
+  currentVal = Number(e.target.value);
+  applyColorFromHsv();
 });
 
 // ---------- Mode setup ----------
@@ -106,7 +201,7 @@ modeButtonsWrap.addEventListener("click", (e) => {
 
 brushSize.addEventListener("input", (e) => {
   currentBrushSize = Number(e.target.value);
-  brushSizeLabel.textContent = `${currentBrushSize} px`;
+  brushSizeLabel.textContent = `${currentBrushSize} PX`;
 });
 
 glowTrailToggle.addEventListener("change", (e) => {
@@ -130,7 +225,7 @@ saveBtn.addEventListener("click", () => {
   out.width = drawCanvas.width;
   out.height = drawCanvas.height;
   const outCtx = out.getContext("2d");
-  outCtx.fillStyle = "#0b0d14";
+  outCtx.fillStyle = "#000000";
   outCtx.fillRect(0, 0, out.width, out.height);
   outCtx.drawImage(drawCanvas, 0, 0);
   const link = document.createElement("a");
@@ -317,6 +412,12 @@ function updateTrackedHands(landmarksList, handednessList) {
   Array.from(trackedHands.keys()).forEach((key) => {
     if (!seenKeys.has(key)) trackedHands.delete(key);
   });
+
+  if (landmarksList && landmarksList.length && !everSawHand) {
+    everSawHand = true;
+    clearNoHandHintTimer();
+    statusHint.textContent = "";
+  }
 }
 
 // ---------- Render loop (always runs at display refresh, independent of detection rate) ----------
@@ -376,11 +477,57 @@ function renderFrame() {
   }
 
   statusText.textContent = handStates.length
-    ? `Hand detected (${handStates.length})`
-    : "No hand detected";
-  statusText.classList.toggle("active", handStates.length > 0);
+    ? `HAND: ${handStates.length}`
+    : "HAND: NONE";
+  statusText.classList.toggle("ok", handStates.length > 0);
+  statusText.classList.toggle("warn", handStates.length === 0 && workerReady);
 
   if (running) requestAnimationFrame(renderFrame);
+}
+
+// ---------- Diagnostics / watchdogs ----------
+function clearModelLoadTimer() {
+  if (modelLoadTimer) {
+    clearTimeout(modelLoadTimer);
+    modelLoadTimer = null;
+  }
+}
+
+function clearNoHandHintTimer() {
+  if (noHandHintTimer) {
+    clearTimeout(noHandHintTimer);
+    noHandHintTimer = null;
+  }
+}
+
+function armModelLoadTimer() {
+  clearModelLoadTimer();
+  modelLoadTimer = setTimeout(() => {
+    if (!workerReady) {
+      statusModel.textContent = "MODEL: FAILED";
+      statusModel.classList.add("warn");
+      overlayMsg.textContent =
+        "Hand-tracking model is taking too long to load. This is usually a " +
+        "network/firewall issue — school, work, or public Wi-Fi networks " +
+        "often block cdn.jsdelivr.net or storage.googleapis.com, and ad " +
+        "blockers/privacy extensions can too. Try a different network " +
+        "(e.g. mobile data), disable extensions for this site, or check " +
+        "the browser console (F12) for the exact blocked request.";
+      startBtn.disabled = false;
+      startOverlay.classList.remove("hidden");
+    }
+  }, MODEL_LOAD_TIMEOUT_MS);
+}
+
+function armNoHandHintTimer() {
+  clearNoHandHintTimer();
+  noHandHintTimer = setTimeout(() => {
+    if (!everSawHand) {
+      statusHint.textContent =
+        "No hand seen yet — make sure your hand is fully in frame with " +
+        "good lighting, or lower the confidence sliders in Detection Tuning.";
+    }
+  }, NO_HAND_HINT_DELAY_MS);
 }
 
 // ---------- Worker + detection pump ----------
@@ -393,17 +540,24 @@ function setupWorker() {
     const msg = e.data;
     if (msg.type === "READY") {
       workerReady = true;
+      clearModelLoadTimer();
+      statusModel.textContent = "MODEL: READY";
+      statusModel.classList.add("ok");
+      armNoHandHintTimer();
     } else if (msg.type === "RESULT") {
       awaitingDetection = false;
       updateTrackedHands(msg.landmarks, msg.handedness);
     } else if (msg.type === "ERROR") {
       awaitingDetection = false;
       console.error("hand-worker error:", msg.message);
+      statusModel.textContent = "MODEL: ERROR";
+      statusModel.classList.add("warn");
       overlayMsg.textContent = "Hand-tracking error: " + msg.message;
     }
   };
 
   worker.postMessage({ type: "INIT", options: workerOptions });
+  armModelLoadTimer();
 }
 
 function pumpFrame() {
@@ -442,6 +596,7 @@ async function startCamera() {
   try {
     startBtn.disabled = true;
     overlayMsg.textContent = "";
+    statusCamera.textContent = "CAMERA: STARTING...";
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 480 },
       audio: false,
@@ -449,9 +604,12 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
     resizeCanvases();
+    statusCamera.textContent = "CAMERA: ON";
+    statusCamera.classList.add("ok");
 
     if (!worker) {
       overlayMsg.textContent = "Loading hand-tracking model...";
+      statusModel.textContent = "MODEL: LOADING...";
       setupWorker();
     }
 
@@ -461,8 +619,10 @@ async function startCamera() {
     requestAnimationFrame(renderFrame);
   } catch (err) {
     console.error(err);
+    statusCamera.textContent = "CAMERA: ERROR";
+    statusCamera.classList.add("warn");
     overlayMsg.textContent =
-      "Could not access camera / load model: " + (err.message || err);
+      "Could not access camera: " + (err.message || err);
     startBtn.disabled = false;
   }
 }
@@ -473,5 +633,6 @@ window.addEventListener("resize", () => {
   if (video.videoWidth) resizeCanvases();
 });
 
-buildPalette();
-selectColor(currentColor, palette.children[1]);
+drawColorWheel();
+applyColorFromHsv();
+setWheelCursorFromHsv();
