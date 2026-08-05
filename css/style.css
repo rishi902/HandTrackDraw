@@ -1,0 +1,273 @@
+:root {
+  --bg: #0b0d14;
+  --panel: #12151f;
+  --panel-border: #232838;
+  --text: #e8eaf2;
+  --text-dim: #8b90a3;
+  --accent: #00e5ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  height: 100%;
+}
+
+.topbar {
+  padding: 18px 24px 8px;
+  text-align: center;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
+  background: linear-gradient(90deg, #00e5ff, #b967ff, #ff2d75);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tagline {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.app {
+  display: flex;
+  gap: 20px;
+  padding: 12px 24px 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.stage-wrap {
+  position: relative;
+  flex: 1 1 640px;
+  max-width: 960px;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  transform: scaleX(-1);
+}
+
+.stage.no-mirror {
+  transform: none;
+}
+
+.stage video,
+.stage canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stage video {
+  opacity: 0.55;
+}
+
+#draw-canvas {
+  z-index: 1;
+}
+
+#fx-canvas {
+  z-index: 2;
+}
+
+.stage-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(5, 6, 10, 0.55);
+  border-radius: 16px;
+  transition: opacity 0.2s ease;
+}
+
+.stage-overlay.hidden {
+  display: none;
+}
+
+.primary-btn {
+  background: linear-gradient(90deg, #00e5ff, #b967ff);
+  color: #05060a;
+  border: none;
+  padding: 12px 28px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-btn:hover {
+  filter: brightness(1.1);
+}
+
+.overlay-msg {
+  color: #ffb4b4;
+  font-size: 0.85rem;
+  max-width: 320px;
+  text-align: center;
+  margin: 0;
+}
+
+.status-bar {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+#status-text.active {
+  color: #7cff9c;
+}
+
+.controls {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.control-group {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.control-group h2 {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.mode-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  flex: 1 1 auto;
+  background: #1a1e2b;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.mode-btn.active {
+  background: linear-gradient(90deg, #00e5ff, #b967ff);
+  color: #05060a;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.palette {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.swatch.selected {
+  border-color: #fff;
+}
+
+#custom-color {
+  width: 100%;
+  height: 34px;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input[type="range"] {
+  width: 100%;
+}
+
+#brush-size-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-row button {
+  flex: 1;
+  background: #1a1e2b;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-row button:hover {
+  border-color: var(--accent);
+}
+
+.hint ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .app {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .controls {
+    flex: 1 1 auto;
+  }
+}
