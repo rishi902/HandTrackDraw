@@ -1,6 +1,6 @@
 import {
   HandLandmarker,
-  FilesetResolver,
+  DrawingUtils,
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 // ---------- DOM ----------
@@ -21,10 +21,11 @@ const brushSize = document.getElementById("brush-size");
 const brushSizeLabel = document.getElementById("brush-size-label");
 const glowTrailToggle = document.getElementById("glow-trail");
 const mirrorToggle = document.getElementById("mirror-toggle");
+const skeletonToggle = document.getElementById("show-skeleton");
 const clearBtn = document.getElementById("clear-btn");
 const saveBtn = document.getElementById("save-btn");
 
-// ---------- State ----------
+// ---------- Tunables ----------
 const PRESET_COLORS = [
   "#ff2d75", "#00e5ff", "#7cff00", "#ffea00",
   "#b967ff", "#ff7a00", "#ffffff", "#00ffa3",
@@ -33,16 +34,34 @@ const PRESET_COLORS = [
 const FINGERTIPS = [4, 8, 12, 16, 20];
 const FINGER_PIPS = [3, 6, 10, 14, 18];
 
+const POSITION_SMOOTHING = 0.35; // lower = smoother/laggier, higher = snappier
+const PINCH_ON_RATIO = 0.45; // start pinch when dist < scale * this
+const PINCH_OFF_RATIO = 0.62; // release pinch when dist > scale * this (hysteresis avoids flicker)
+const MIN_DRAW_DELTA = 0.4; // px, skip near-zero-length segments while still
+
+// ---------- State ----------
 let currentColor = "#00e5ff";
 let currentBrushSize = 8;
 let currentMode = "draw";
 let glowTrail = false;
+let showSkeleton = false;
 
-let handLandmarker = null;
 let running = false;
-let lastPoints = {}; // handIndex -> {x,y} for draw mode
-let particles = []; // sparks
-let animHandle = null;
+let workerReady = false;
+let awaitingDetection = false;
+let worker = null;
+let drawingUtils = null;
+
+let particles = [];
+/** @type {Map<string, HandState>} keyed by handedness label ("Left"/"Right") for stable identity across frames */
+const trackedHands = new Map();
+
+const workerOptions = {
+  numHands: 2,
+  minHandDetectionConfidence: 0.5,
+  minHandPresenceConfidence: 0.5,
+  minTrackingConfidence: 0.5,
+};
 
 // ---------- Palette setup ----------
 function buildPalette() {
@@ -82,7 +101,7 @@ modeButtonsWrap.addEventListener("click", (e) => {
     .querySelectorAll(".mode-btn")
     .forEach((el) => el.classList.remove("active"));
   btn.classList.add("active");
-  lastPoints = {};
+  trackedHands.forEach((state) => (state.lastDrawPoint = null));
 });
 
 brushSize.addEventListener("input", (e) => {
@@ -96,6 +115,10 @@ glowTrailToggle.addEventListener("change", (e) => {
 
 mirrorToggle.addEventListener("change", (e) => {
   stage.classList.toggle("no-mirror", !e.target.checked);
+});
+
+skeletonToggle.addEventListener("change", (e) => {
+  showSkeleton = e.target.checked;
 });
 
 clearBtn.addEventListener("click", () => {
@@ -116,6 +139,24 @@ saveBtn.addEventListener("click", () => {
   link.click();
 });
 
+// ---------- Advanced detection settings ----------
+function setupAdvancedSlider(id, key, isInt) {
+  const input = document.getElementById(id);
+  const label = document.getElementById(`${id}-value`);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const val = isInt ? parseInt(input.value, 10) : parseFloat(input.value);
+    if (label) label.textContent = String(val);
+    workerOptions[key] = val;
+    worker?.postMessage({ type: "SET_OPTIONS", options: { [key]: val } });
+  });
+}
+
+setupAdvancedSlider("num-hands", "numHands", true);
+setupAdvancedSlider("min-hand-detection-confidence", "minHandDetectionConfidence", false);
+setupAdvancedSlider("min-hand-presence-confidence", "minHandPresenceConfidence", false);
+setupAdvancedSlider("min-tracking-confidence", "minTrackingConfidence", false);
+
 // ---------- Geometry helpers ----------
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -130,10 +171,6 @@ function toPixel(landmark) {
 
 function isFingerExtended(landmarks, wrist, tipIdx, pipIdx) {
   return dist(wrist, landmarks[tipIdx]) > dist(wrist, landmarks[pipIdx]) * 1.15;
-}
-
-function handScale(landmarks) {
-  return dist(landmarks[0], landmarks[9]) || 0.001;
 }
 
 // ---------- Drawing primitives ----------
@@ -205,109 +242,191 @@ function updateAndDrawParticles(ctx) {
   });
 }
 
-function drawStrings(handsData, time) {
-  handsData.forEach(({ landmarks }, handIdx) => {
-    const wrist = landmarks[0];
-    const palmCenter = toPixel(landmarks[9]);
-    const scale = handScale(landmarks);
+function drawStrings(handStates, time) {
+  handStates.forEach((state, handIdx) => {
+    const wristNorm = state.landmarksNorm[0];
+    const palmPx = state.smoothPx[9];
 
     FINGERTIPS.forEach((tipIdx, i) => {
       const pipIdx = FINGER_PIPS[i];
-      if (!isFingerExtended(landmarks, wrist, tipIdx, pipIdx)) return;
-      const tipPx = toPixel(landmarks[tipIdx]);
+      if (!isFingerExtended(state.landmarksNorm, wristNorm, tipIdx, pipIdx)) return;
+      const tipPx = state.smoothPx[tipIdx];
       const pulse = 3 + Math.sin(time / 150 + i + handIdx * 2) * 2;
       const hue = (time / 20 + i * 40 + handIdx * 180) % 360;
       const color = `hsl(${hue}, 100%, 65%)`;
-      strokeGlowLine(fxCtx, palmCenter, tipPx, color, Math.max(pulse, 1.5));
+      strokeGlowLine(fxCtx, palmPx, tipPx, color, Math.max(pulse, 1.5));
       drawCursor(fxCtx, tipPx, color, true);
     });
-
-    void scale;
   });
 
-  // Connect hands together for a two-hand "string" effect
-  if (handsData.length === 2) {
-    const p0 = toPixel(handsData[0].landmarks[8]);
-    const p1 = toPixel(handsData[1].landmarks[8]);
+  if (handStates.length === 2) {
+    const p0 = handStates[0].smoothPx[8];
+    const p1 = handStates[1].smoothPx[8];
     const hue = (time / 10) % 360;
     strokeGlowLine(fxCtx, p0, p1, `hsl(${hue}, 100%, 70%)`, 3);
   }
 }
 
-// ---------- Main per-frame processing ----------
-function processHands(handsData) {
-  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+function drawSkeleton(state) {
+  if (!drawingUtils) drawingUtils = new DrawingUtils(fxCtx);
+  drawingUtils.drawConnectors(state.landmarksNorm, HandLandmarker.HAND_CONNECTIONS, {
+    color: "rgba(255,255,255,0.5)",
+    lineWidth: 2,
+  });
+  drawingUtils.drawLandmarks(state.landmarksNorm, {
+    color: "rgba(255,255,255,0.8)",
+    lineWidth: 1,
+    radius: 2,
+  });
+}
 
-  const time = performance.now();
-  const seenHands = new Set();
+// ---------- Hand tracking state ----------
+function updateTrackedHands(landmarksList, handednessList) {
+  const seenKeys = new Set();
 
-  handsData.forEach(({ landmarks }, handIdx) => {
-    seenHands.add(handIdx);
-    const wrist = landmarks[0];
-    const scale = handScale(landmarks);
+  (landmarksList || []).forEach((landmarks, i) => {
+    const label = handednessList?.[i]?.[0]?.categoryName || `hand${i}`;
+    seenKeys.add(label);
+
+    const targetPx = landmarks.map(toPixel);
+    const scale = dist(landmarks[0], landmarks[9]) || 0.001;
     const pinchDist = dist(landmarks[4], landmarks[8]);
-    const pinching = pinchDist < scale * 0.55;
-    const indexTip = toPixel(landmarks[8]);
 
-    drawCursor(fxCtx, indexTip, currentColor, pinching);
-
-    if (currentMode === "draw") {
-      if (pinching) {
-        if (glowTrail) {
-          drawCtx.save();
-          drawCtx.globalCompositeOperation = "destination-out";
-          drawCtx.fillStyle = "rgba(0,0,0,0.06)";
-          drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
-          drawCtx.restore();
-        }
-        const prev = lastPoints[handIdx];
-        if (prev) {
-          strokeGlowLine(drawCtx, prev, indexTip, currentColor, currentBrushSize);
-        }
-        lastPoints[handIdx] = indexTip;
-      } else {
-        lastPoints[handIdx] = null;
-      }
-    } else if (currentMode === "sparks") {
-      if (pinching) spawnParticles(indexTip, currentColor);
+    let state = trackedHands.get(label);
+    if (!state) {
+      state = {
+        smoothPx: targetPx.map((p) => ({ ...p })),
+        pinching: false,
+        lastDrawPoint: null,
+      };
+      trackedHands.set(label, state);
     }
 
-    void wrist;
+    state.landmarksNorm = landmarks;
+    state.targetPx = targetPx;
+    state.scale = scale;
+    state.pinchDist = pinchDist;
+
+    if (!state.pinching && pinchDist < scale * PINCH_ON_RATIO) {
+      state.pinching = true;
+    } else if (state.pinching && pinchDist > scale * PINCH_OFF_RATIO) {
+      state.pinching = false;
+    }
   });
 
-  // clear stale lastPoints for hands no longer visible
-  Object.keys(lastPoints).forEach((k) => {
-    if (!seenHands.has(Number(k))) delete lastPoints[k];
+  Array.from(trackedHands.keys()).forEach((key) => {
+    if (!seenKeys.has(key)) trackedHands.delete(key);
+  });
+}
+
+// ---------- Render loop (always runs at display refresh, independent of detection rate) ----------
+function renderFrame() {
+  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+
+  if (glowTrail) {
+    drawCtx.save();
+    drawCtx.globalCompositeOperation = "destination-out";
+    drawCtx.fillStyle = "rgba(0,0,0,0.05)";
+    drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+    drawCtx.restore();
+  }
+
+  const time = performance.now();
+  const handStates = Array.from(trackedHands.values());
+
+  handStates.forEach((state) => {
+    // Ease the rendered position toward the latest detection every frame,
+    // regardless of how often new detections actually arrive. This is what
+    // keeps strokes/cursor smooth even though inference runs in a worker at
+    // a lower, less regular cadence than the display refresh rate.
+    state.smoothPx = state.smoothPx.map((p, i) => ({
+      x: p.x + (state.targetPx[i].x - p.x) * POSITION_SMOOTHING,
+      y: p.y + (state.targetPx[i].y - p.y) * POSITION_SMOOTHING,
+    }));
+
+    const tip = state.smoothPx[8];
+    drawCursor(fxCtx, tip, currentColor, state.pinching);
+    if (showSkeleton) drawSkeleton(state);
+
+    if (currentMode === "draw") {
+      if (state.pinching) {
+        if (!state.lastDrawPoint) {
+          // Starting a new stroke: draw a dot immediately so a stationary
+          // pinch still marks the canvas, not just ones that move first.
+          strokeGlowLine(drawCtx, tip, tip, currentColor, currentBrushSize);
+          state.lastDrawPoint = { ...tip };
+        } else if (dist(state.lastDrawPoint, tip) > MIN_DRAW_DELTA) {
+          strokeGlowLine(drawCtx, state.lastDrawPoint, tip, currentColor, currentBrushSize);
+          state.lastDrawPoint = { ...tip };
+        }
+      } else {
+        state.lastDrawPoint = null;
+      }
+    } else if (currentMode === "sparks") {
+      if (state.pinching) spawnParticles(tip, currentColor);
+    }
   });
 
-  if (currentMode === "strings") {
-    drawStrings(handsData, time);
+  if (currentMode === "strings" && handStates.length) {
+    drawStrings(handStates, time);
   }
 
   if (currentMode === "sparks" || particles.length) {
     updateAndDrawParticles(fxCtx);
   }
 
-  statusText.textContent = handsData.length
-    ? `Hand detected (${handsData.length})`
+  statusText.textContent = handStates.length
+    ? `Hand detected (${handStates.length})`
     : "No hand detected";
-  statusText.classList.toggle("active", handsData.length > 0);
+  statusText.classList.toggle("active", handStates.length > 0);
+
+  if (running) requestAnimationFrame(renderFrame);
 }
 
-// ---------- Camera + detection loop ----------
-async function setupHandLandmarker() {
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-  );
-  handLandmarker = await HandLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-      delegate: "GPU",
-    },
-    runningMode: "VIDEO",
-    numHands: 2,
+// ---------- Worker + detection pump ----------
+function setupWorker() {
+  worker = new Worker(new URL("./hand-worker.js", import.meta.url), {
+    type: "module",
   });
+
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === "READY") {
+      workerReady = true;
+    } else if (msg.type === "RESULT") {
+      awaitingDetection = false;
+      updateTrackedHands(msg.landmarks, msg.handedness);
+    } else if (msg.type === "ERROR") {
+      awaitingDetection = false;
+      console.error("hand-worker error:", msg.message);
+      overlayMsg.textContent = "Hand-tracking error: " + msg.message;
+    }
+  };
+
+  worker.postMessage({ type: "INIT", options: workerOptions });
+}
+
+function pumpFrame() {
+  if (!running) return;
+
+  if (workerReady && !awaitingDetection && video.readyState >= 2) {
+    awaitingDetection = true;
+    createImageBitmap(video)
+      .then((bitmap) => {
+        worker.postMessage({ type: "DETECT", bitmap, timestamp: performance.now() }, [
+          bitmap,
+        ]);
+      })
+      .catch(() => {
+        awaitingDetection = false;
+      });
+  }
+
+  if (video.requestVideoFrameCallback) {
+    video.requestVideoFrameCallback(pumpFrame);
+  } else {
+    requestAnimationFrame(pumpFrame);
+  }
 }
 
 function resizeCanvases() {
@@ -317,18 +436,6 @@ function resizeCanvases() {
     c.width = w;
     c.height = h;
   });
-}
-
-function loop() {
-  if (!running) return;
-  if (handLandmarker && video.readyState >= 2) {
-    const results = handLandmarker.detectForVideo(video, performance.now());
-    const handsData = (results.landmarks || []).map((landmarks) => ({
-      landmarks,
-    }));
-    processHands(handsData);
-  }
-  animHandle = requestAnimationFrame(loop);
 }
 
 async function startCamera() {
@@ -343,14 +450,15 @@ async function startCamera() {
     await video.play();
     resizeCanvases();
 
-    if (!handLandmarker) {
+    if (!worker) {
       overlayMsg.textContent = "Loading hand-tracking model...";
-      await setupHandLandmarker();
+      setupWorker();
     }
 
     startOverlay.classList.add("hidden");
     running = true;
-    loop();
+    pumpFrame();
+    requestAnimationFrame(renderFrame);
   } catch (err) {
     console.error(err);
     overlayMsg.textContent =
