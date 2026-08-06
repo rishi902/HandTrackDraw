@@ -19,7 +19,7 @@ strokes, glowing "strings", or particle sparks in the air.
 - Optional **hand skeleton overlay** and **detection-confidence sliders**
   (max hands, detection/presence/tracking confidence) for tuning tracking
   to your lighting/camera.
-- **Three visual modes**
+- **Five visual modes**
   - ✏️ **Draw** — pinch to paint a persistent freehand stroke. Toggle "Glow
     trail" for a fading light-painting effect instead of a permanent line.
   - 🎇 **Strings** — glowing lines radiate from your palm to each extended
@@ -27,6 +27,12 @@ strokes, glowing "strings", or particle sparks in the air.
     connects your two index fingers too.
   - ✨ **Sparks** — pinch to shoot a colored particle trail from your
     fingertip, complete with gravity and fade-out.
+  - 🌸 **Flower** — pinch to hold it as a closed bud; spread your fingers
+    open and it blooms into a spidery, curved-petal flower. Move your hand
+    side to side to spin it.
+  - 🔮 **Jelly** — glassy, coiled "slinky" strings connect your palm to
+    every fingertip, compressing into tight coils when your hand is closed
+    and stretching out as you spread your fingers.
 - **HSV color wheel** — click/drag anywhere on the wheel to pick a color,
   plus a brightness slider.
 - **Adjustable brush size**, mirror toggle, clear canvas, and save-as-PNG.
@@ -54,13 +60,15 @@ hand-tracking model on first load.
 
 ## How to use
 
-1. Pick a **mode** (Draw / Strings / Sparks) from the right-hand panel.
+1. Pick a **mode** (Draw / Strings / Sparks / Flower / Jelly) from the
+   right-hand panel.
 2. Pick a **color** from the color wheel, and adjust brightness below it.
 3. Hold your hand up in front of the camera.
 4. **Pinch** your thumb and index fingertip together — that's your "pen
-   down" gesture for Draw and Sparks mode. Strings mode is always active
-   while your hand is visible; extend fingers to control how many strings
-   radiate from your palm.
+   down" gesture for Draw and Sparks mode, and holds Flower mode as a
+   closed bud. Strings, Flower, and Jelly modes are otherwise always
+   active while your hand is visible — extend/spread your fingers to
+   control them.
 5. Use **Clear** to wipe the canvas, or **Save PNG** to download your
    drawing.
 6. If tracking feels jittery or misses your hand, open **Detection

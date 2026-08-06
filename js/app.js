@@ -51,6 +51,15 @@ const PINCH_ON_RATIO = 0.45; // start pinch when dist < scale * this
 const PINCH_OFF_RATIO = 0.62; // release pinch when dist > scale * this (hysteresis avoids flicker)
 const MIN_DRAW_DELTA = 0.4; // px, skip near-zero-length segments while still
 
+const FLOWER_PETALS = 9;
+const GROWTH_SMOOTHING = 0.08; // slower = more organic bloom/close animation
+const FLOWER_SPREAD_MIN = 1.05; // normalized fingertip spread that reads as a closed bud
+const FLOWER_SPREAD_MAX = 2.7; // normalized fingertip spread that reads as fully bloomed
+const FLOWER_ROTATION_SENSITIVITY = 0.012; // rad per px of horizontal palm movement
+const FLOWER_IDLE_SPIN = 0.0015; // rad/frame ambient spin so it's never fully static
+
+const JELLY_REST_RATIO = 2.3; // palm-to-fingertip distance (in hand-scale units) treated as "relaxed"
+
 const MODEL_LOAD_TIMEOUT_MS = 20000;
 const NO_HAND_HINT_DELAY_MS = 6000;
 
@@ -277,6 +286,10 @@ function isFingerExtended(landmarks, wrist, tipIdx, pipIdx) {
   return dist(wrist, landmarks[tipIdx]) > dist(wrist, landmarks[pipIdx]) * 1.15;
 }
 
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
 // ---------- Drawing primitives ----------
 function strokeGlowLine(ctx, from, to, color, size) {
   ctx.save();
@@ -371,6 +384,116 @@ function drawStrings(handStates, time) {
   }
 }
 
+function drawFlower(handStates, time) {
+  handStates.forEach((state) => {
+    const center = state.smoothPx[9];
+    const scalePx = dist(state.smoothPx[0], state.smoothPx[9]) || 20;
+    const growth = state.growthSmooth ?? 0;
+    const maxLen = scalePx * 3.1 * (0.12 + growth * 0.88);
+    const curl = growth * 0.4;
+
+    for (let i = 0; i < FLOWER_PETALS; i++) {
+      const angle = (i / FLOWER_PETALS) * Math.PI * 2 + state.flowerRotation;
+      const perpAngle = angle + Math.PI / 2;
+      const tipX = center.x + Math.cos(angle) * maxLen;
+      const tipY = center.y + Math.sin(angle) * maxLen;
+      const ctrlDist = maxLen * 0.55;
+      const ctrlX =
+        center.x + Math.cos(angle) * ctrlDist + Math.cos(perpAngle) * maxLen * curl;
+      const ctrlY =
+        center.y + Math.sin(angle) * ctrlDist + Math.sin(perpAngle) * maxLen * curl;
+
+      fxCtx.save();
+      fxCtx.lineCap = "round";
+      fxCtx.strokeStyle = currentColor;
+      fxCtx.shadowColor = currentColor;
+      fxCtx.shadowBlur = 8;
+      fxCtx.lineWidth = 1.5 + growth * 2.5;
+      fxCtx.beginPath();
+      fxCtx.moveTo(center.x, center.y);
+      fxCtx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY);
+      fxCtx.stroke();
+      fxCtx.restore();
+    }
+
+    fxCtx.save();
+    fxCtx.fillStyle = currentColor;
+    fxCtx.shadowColor = currentColor;
+    fxCtx.shadowBlur = 14;
+    fxCtx.beginPath();
+    fxCtx.arc(center.x, center.y, scalePx * (0.14 + growth * 0.08), 0, Math.PI * 2);
+    fxCtx.fill();
+    fxCtx.restore();
+  });
+}
+
+function drawJellyCoil(ctx, from, to, time, seed, color, restLen) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 0.001;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+
+  const stretch = clamp(len / restLen, 0.35, 3);
+  const amplitude = clamp(16 / stretch, 3, 22);
+  const periods = 7;
+  const wobble = Math.sin(time / 320 + seed) * 1.4;
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  const grad = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+  grad.addColorStop(0, "rgba(255,255,255,0.85)");
+  grad.addColorStop(0.5, color);
+  grad.addColorStop(1, "rgba(255,255,255,0.85)");
+
+  ctx.beginPath();
+  const steps = 36;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const baseX = from.x + dx * t;
+    const baseY = from.y + dy * t;
+    const taper = Math.sin(t * Math.PI); // 0 at both ends, so it doesn't poke past the anchors
+    const s = Math.sin(t * periods * Math.PI * 2 + wobble) * amplitude * taper;
+    const x = baseX + px * s;
+    const y = baseY + py * s;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+
+  ctx.strokeStyle = grad;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 14;
+  ctx.lineWidth = 3;
+  ctx.globalAlpha = 0.85;
+  ctx.stroke();
+
+  // Bright thin highlight over the same path for a glassy sheen.
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.6;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawJelly(handStates, time) {
+  handStates.forEach((state, handIdx) => {
+    const palm = state.smoothPx[9];
+    const scalePx = dist(state.smoothPx[0], state.smoothPx[9]) || 20;
+    const restLen = scalePx * JELLY_REST_RATIO;
+
+    FINGERTIPS.forEach((tipIdx, i) => {
+      const tip = state.smoothPx[tipIdx];
+      drawJellyCoil(fxCtx, palm, tip, time, handIdx * 10 + i, currentColor, restLen);
+    });
+  });
+}
+
 function drawSkeleton(state) {
   fxCtx.save();
   fxCtx.strokeStyle = "rgba(255,255,255,0.5)";
@@ -410,6 +533,9 @@ function updateTrackedHands(landmarksList, handednessList) {
         smoothPx: targetPx.map((p) => ({ ...p })),
         pinching: false,
         lastDrawPoint: null,
+        growthSmooth: 0,
+        flowerRotation: Math.random() * Math.PI * 2,
+        prevPalmPx: null,
       };
       trackedHands.set(label, state);
     }
@@ -424,6 +550,20 @@ function updateTrackedHands(landmarksList, handednessList) {
     } else if (state.pinching && pinchDist > scale * PINCH_OFF_RATIO) {
       state.pinching = false;
     }
+
+    // How "open" the hand is, 0 (bud) to 1 (bloomed) — a pinch always forces
+    // it back down to a bud regardless of the other fingers.
+    const avgSpread =
+      FINGERTIPS.reduce((sum, tipIdx) => sum + dist(landmarks[9], landmarks[tipIdx]), 0) /
+      FINGERTIPS.length /
+      scale;
+    let growthTarget = clamp(
+      (avgSpread - FLOWER_SPREAD_MIN) / (FLOWER_SPREAD_MAX - FLOWER_SPREAD_MIN),
+      0,
+      1
+    );
+    if (state.pinching) growthTarget = Math.min(growthTarget, 0.1);
+    state.growthTarget = growthTarget;
   });
 
   Array.from(trackedHands.keys()).forEach((key) => {
@@ -462,6 +602,15 @@ function renderFrame() {
       y: p.y + (state.targetPx[i].y - p.y) * POSITION_SMOOTHING,
     }));
 
+    state.growthSmooth += ((state.growthTarget ?? 0) - state.growthSmooth) * GROWTH_SMOOTHING;
+
+    const palm = state.smoothPx[9];
+    if (state.prevPalmPx) {
+      state.flowerRotation +=
+        (palm.x - state.prevPalmPx.x) * FLOWER_ROTATION_SENSITIVITY + FLOWER_IDLE_SPIN;
+    }
+    state.prevPalmPx = { ...palm };
+
     const tip = state.smoothPx[8];
     drawCursor(fxCtx, tip, currentColor, state.pinching);
     if (showSkeleton) drawSkeleton(state);
@@ -487,6 +636,10 @@ function renderFrame() {
 
   if (currentMode === "strings" && handStates.length) {
     drawStrings(handStates, time);
+  } else if (currentMode === "flower" && handStates.length) {
+    drawFlower(handStates, time);
+  } else if (currentMode === "jelly" && handStates.length) {
+    drawJelly(handStates, time);
   }
 
   if (currentMode === "sparks" || particles.length) {
